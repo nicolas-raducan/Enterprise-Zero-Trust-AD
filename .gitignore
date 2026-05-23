@@ -1,0 +1,10 @@
+# Virtualizations & OS Images
+*.iso
+*.vhd
+*.vhdx
+*.qcow2
+*.vmdk
+
+# Temporary files
+*.tmp
+*.log
