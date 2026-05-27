@@ -10,19 +10,121 @@ By treating the deployment as **Infrastructure as Code**, this project demonstra
 
 ## Table of Contents
 1. [Project Overview](#-project-overview)
-2. [Technologies & Core Concepts](#-technologies--core-concepts)
-3. [Repository Structure](#-repository-structure)
-4. [System Requirements](#-system-requirements)
-5. [Installation & Deployment Guide](#-installation--deployment-guide)
-6. [Key Implementation Features](#-key-implementation-features)
-7. [Validation & Test Scenarios](#-validation--test-scenarios)
-8. [Engineering Lessons](#-engineering-lessons)
+2. [Architecture](#-architecture)
+3. [Threat Model](#-threat-model)
+4. [Technologies & Core Concepts](#-technologies--core-concepts)
+5. [Repository Structure](#-repository-structure)
+6. [System Requirements](#-system-requirements)
+7. [Installation & Deployment Guide](#-installation--deployment-guide)
+8. [Key Implementation Features](#-key-implementation-features)
+9. [Validation & Test Scenarios](#-validation--test-scenarios)
+10. [Engineering Lessons](#-engineering-lessons)
 
 ## Project Overview
 
 This lab is an automated, Infrastructure as Code (IaC) implementation of a secure enterprise network environment named **AllSafeCorp** (`allsafecyber.local`). The project transitions from a legacy perimeter security model to a modern **Zero Trust Architecture**, incorporating the **Microsoft Enterprise Access Model** and strict **Role-Based Access Control (RBAC)**.
 
 The entire infrastructure, including Active Directory structure, identity provisioning and system hardening is fully deployed via automated **PowerShell** scripting on a headless **Windows Server Core** host virtualized via **KVM/QEMU**.
+
+---
+
+## Architecture
+
+### Network Topology
+The Domain Controller is dual-homed, acting as a NAT router between the external WAN and an isolated Host-Only LAN. Standard endpoints have no direct internet exposure — all egress is controlled at the DC.
+
+```mermaid
+graph TD
+    Internet((Internet)) -->|NAT / Outbound| WAN[NIC 1: WAN Interface <br/> 10.0.0.10]
+
+    subgraph Hypervisor [KVM / QEMU Virtualized Environment]
+        WAN --- DC[Domain Controller <br/> Windows Server 2022 Core]
+        DC --- LAN[NIC 2: LAN Interface <br/> 172.16.0.10]
+        LAN -->|Host-Only Network| VSwitch{Virtual Switch}
+
+        VSwitch --> T1[Tier 1: Application Servers]
+        VSwitch --> T2[Tier 2: Windows 10 Endpoints]
+    end
+
+    classDef infrastructure fill:#f9f,stroke:#333,stroke-width:2px;
+    class DC infrastructure;
+```
+
+### Active Directory Tiering Model (OU Structure)
+Administrative privileges are segregated into completely isolated Tiers, preventing credential overlap and lateral movement. The full hierarchy was deployed via IaC in a single script run.
+
+```mermaid
+graph TD
+    Root[DC=allsafecyber, DC=local] --> AllSafe[OU=AllSafeCorp]
+
+    AllSafe --> T0[OU=T0_Infrastructure]
+    AllSafe --> T1[OU=T1_Servers]
+    AllSafe --> T2[OU=T2_Assets]
+
+    AllSafe -.-> Disabled[OU=Disabled_Users]
+    AllSafe -.-> Service[OU=Service_Accounts]
+
+    subgraph Tier 0 [Highest Privilege]
+        T0 --> T0G[OU=T0_Groups]
+        T0 --> EA[OU=Emergency_Accounts <br/> Break-Glass]
+    end
+
+    subgraph Tier 2 [Standard Assets]
+        T2 --> HR[OU=HR_Dept]
+        T2 --> IT[OU=IT_Dept]
+        T2 --> MGMT[OU=Management]
+
+        HR --> U_HR[OU=Users]
+        HR --> C_HR[OU=Computers]
+    end
+
+    style Tier 0 fill:#ffe6e6,stroke:#ff0000,stroke-width:2px;
+    style Tier 2 fill:#e6f3ff,stroke:#0066cc,stroke-width:2px;
+```
+
+### RBAC & NTFS Isolation
+NTFS inheritance is explicitly broken at the share root ("Deny by Default"). Access is granted only through department security groups assigned during automated provisioning — cross-department access is blocked at the kernel level.
+
+```mermaid
+flowchart LR
+    subgraph HR Department
+        UserA([Angela - HR User]) -->|Member of| HRGroup[HR_Users Group]
+    end
+
+    subgraph IT Department
+        UserB([Lloyd - IT User]) -->|Member of| ITGroup[IT_Users Group]
+    end
+
+    subgraph SMB Share / Corporate_Shares
+        HRFolder{/HR_Data}
+        ITFolder{/IT_Data}
+    end
+
+    HRGroup -->|Explicit Allow: Modify| HRFolder
+    ITGroup -.->|Access Denied| HRFolder
+
+    ITGroup -->|Explicit Allow: Modify| ITFolder
+    HRGroup -.->|Access Denied| ITFolder
+
+    style HRFolder fill:#d9ead3,stroke:#38761d
+    style ITFolder fill:#c9daf8,stroke:#1155cc
+```
+
+---
+
+## Threat Model
+
+Each security control in this lab was chosen to defeat a specific, documented attack pattern. The table below maps control → threat → reasoning.
+
+| Attack | Control | How It Mitigates |
+|---|---|---|
+| **Pass-the-Hash / Credential Theft** | T0/T1/T2 Tiering (Enterprise Access Model) | T0 admin credentials are never cached on Tier 2 endpoints. Even if a workstation is fully compromised and memory is dumped, the extracted hashes cannot authenticate against the Domain Controller. |
+| **Lateral Movement** | NTFS Deny-by-Default (broken inheritance + group ACLs) | A compromised Tier 2 account hits a kernel-level `Access Denied` on every share outside its own department. Horizontal file-system movement is blocked regardless of network access. |
+| **Living off the Land (LotL)** | GPO: CMD, Regedit, PowerShell disabled for standard users | Removes the native tools most commonly abused in post-exploitation. Attackers cannot execute arbitrary commands, modify registry keys, or run scripts without dropping specialised malware — raising the cost of the attack significantly. |
+| **Brute-Force / Password Spraying** | Global Identity Hardening GPO (14-char min, lockout policy) | Enforces a domain-wide password policy that defeats most automated credential attacks. Short or reused passwords are rejected at provisioning time. |
+| **Privilege Escalation via Default Accounts** | Break-Glass isolation (`emg_recovery` renamed, T0-isolated) | The built-in Administrator account — the primary target of most privilege-escalation tooling — does not exist under its default name or in an accessible OU. |
+| **Undetected Execution on DC** | T0 Audit GPO (Event ID 4688 + command-line logging) | Every process spawned on the Domain Controller is logged with full command-line arguments. Blue Team analysts have forensic-grade visibility into attacker commands. |
+| **USB-Based Exfiltration / Malware Delivery** | T2 CIS Baseline GPO (USB removable storage disabled) | Physical storage is blocked at Group Policy level on all Tier 2 endpoints, removing a common data-exfiltration and initial-access vector. |
 
 ---
 
@@ -131,7 +233,7 @@ On the Windows Server Core machine, open a PowerShell Terminal with Administrato
 
 # 10. Restrict Tier 2 Assets (Baseline CIS configs & restrict CMD/Regedit/PowerShell)
 .\hardening-scripts\New-T2BaselineGPO.ps1
-.\hardening-scripts\New-T2Restrictions.ps1
+.\hardening-scripts\New-T2RestrictionsGPO.ps1
 ```
 
 ---
@@ -159,15 +261,51 @@ To establish a robust security posture, Group Policy Objects (GPOs) are layered 
 
 ## Validation & Test Scenarios
 
-The repository contains concrete visual evidence of the architecture's resilience in the `screenshots/` directory, validating the policies against simulated internal threats:
+The screenshots below are live captures from the deployed lab, validating each security control against real policy enforcement.
 
-* **Lateral Movement Mitigation (LotL):** Standard Tier 2 users attempting to launch administrative tools (`cmd.exe`, `regedit.exe`) face immediate operating system restrictions enforced by Group Policy.
-* **Data Exfiltration Prevention (RBAC):** Unauthorized cross-department queries trigger strict `Access Denied` kernel blocks due to customized NTFS ACLs.
-* **Advanced Auditing Verification:** Implementation of Event ID 4688 with command-line auditing ensures that any spawned processes on the Domain controller are logged for Blue Team forensic analysis.
+### Active Directory Structure
+The deployed OU hierarchy, confirming Tier 0/1/2 separation and the Break-Glass Emergency Account isolation.
+
+![OU Structure](screenshots/15_OU_Structure.png)
+
+### Password Policy Enforcement
+The Global Identity Hardening GPO applied at the domain root — 14-character minimum length, complexity requirements, and lockout thresholds.
+
+![Password Policy](screenshots/19_Password_Policy.png)
+
+### Living off the Land (LotL) Mitigation
+Standard Tier 2 users attempting to launch native attacker tools are blocked immediately by Group Policy — no malware or AV required.
+
+**CMD.exe blocked:**
+
+![CMD Disabled](screenshots/21_1_CMD_Disabled_Policy.png)
+
+**Regedit blocked:**
+
+![Registry Disabled](screenshots/21_2_Registry_Disbaled_Policy.png)
+
+**PowerShell restricted:**
+
+![PowerShell Restricted](screenshots/21_3_Powershell_Restrictions_Policy.png)
+
+### Data Exfiltration Prevention (RBAC / NTFS)
+Cross-department file access triggers a kernel-level `Access Denied` block. The NTFS ACL is enforced before any application logic runs.
+
+![File Restrictions](screenshots/21_4_File_Restrictions.png)
+
+### Tier 0 Audit Policy (Blue Team Forensics)
+Event ID 4688 with command-line visibility enabled on the Domain Controller. Every process spawned on Tier 0 infrastructure is logged for forensic analysis.
+
+![T0 Audit Policy](screenshots/22_AuditTracking_T0_Policy.png)
+
+### Tier 2 CIS Baseline
+Hardware controls applied to standard endpoints — USB removable storage disabled, 15-minute screen lock enforced.
+
+![T2 Baseline Policy](screenshots/23_T2_Baseline_Policy.png)
 
 ---
 
-# Engineering Lessons
+## Engineering Lessons
 
 During development, a critical native limitation of Windows security automation via pure PowerShell was analyzed. Attempts to fully automate Tier 0 administrative account isolation, specifically modifying *User Rights Assignment* policies such as *Deny log on locally*, through direct scripting or registry overrides failed.
 
