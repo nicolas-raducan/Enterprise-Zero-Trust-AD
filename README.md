@@ -151,9 +151,9 @@ Each security control in this lab was chosen to defeat a specific, documented at
     * `08_FileSharing.ps1`: - Zero Trust file shares and NTFS ACL configuration.
     * `employees.csv`: - Dummy HR data for bulk provisioning.
 * `hardening-scripts/`: Group Policy Objects (GPO) deployed as code for endpoint hardening and advanced auditing.
-    * `GlobalIdentityHardening_GPO.ps1`: Enforces strict password complexity, length and lockout thresholds at the domain root.
+    * `GlobalIdentityHardeningGPO.ps1`: Enforces strict password complexity, length and lockout thresholds at the domain root.
     * `New-T0AuditVaultGPO.ps1`: Enables high fidelity logging (Event ID 4688 & Command Line visibility) for Tier 0.
-    * `New-T2BaseLineGPO.ps1`: Deploys CIS baseline configurations (15-minute screen lock, USB storage deny) for T2 endpoints.
+    * `New-T2BaselineGPO.ps1`: Deploys CIS baseline configurations (15-minute screen lock, USB storage deny) for T2 endpoints.
     * `New-T2RestrictionsGPO.ps1`: Mitigates LotL attacks by disabling CMD, Regedit and PowerShell for non-technical departments.
 * `docs/`: Core architectural documentation, original thesis document and executive summary.
 * `screenshots/`: Visual proofs of security policies blocking lateral movement, Active Directory structure and validation tests.
