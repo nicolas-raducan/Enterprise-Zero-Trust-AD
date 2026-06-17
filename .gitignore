@@ -5,6 +5,12 @@
 *.qcow2
 *.vmdk
 
+# OS / editor
+.DS_Store
+.trash/
+.obsidian/
+.vscode/
+
 # Temporary files
 *.tmp
 *.log
